@@ -1,0 +1,9 @@
+.runtime/
+.claude/
+personas/
+!personas/b64fa6d59026
+.codex
+README_ref.md
+__pycache__/
+.pytest_cache/
+*.py[cod]
