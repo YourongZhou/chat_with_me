@@ -2,7 +2,7 @@
 
 # 博主.skill
 
-> *把公开社交媒体语料蒸馏成一个能对话、能分析、能改写风格的 Persona Skill。*
+> *把公开社交媒体语料整理成一个能对话、能分析、能改写风格的 Persona Skill。*
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://python.org)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
@@ -41,7 +41,7 @@
 
 ## 这是什么
 
-这是一个 persona 蒸馏仓库。
+这是一个 persona 制作仓库。
 
 它现在做的事情很具体：
 
@@ -86,7 +86,7 @@
 
 ### 1. 统一 Persona 持久化
 
-每个 persona 都会落到：
+每个 persona 都被保存在：
 
 ```text
 personas/<person_id>/
