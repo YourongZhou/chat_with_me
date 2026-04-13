@@ -380,3 +380,13 @@ SOCIAL_PERSONA_RUN_LIVE=1 conda run -n chat pytest -q tests/live
         ├── test_platform_backends.py
         └── test_skill_build.py
 ```
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=YourongZhou%2Fchat_with_me&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=YourongZhou/chat_with_me&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=YourongZhou/chat_with_me&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=YourongZhou/chat_with_me&type=date&legend=top-left" />
+ </picture>
+</a>
