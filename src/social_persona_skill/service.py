@@ -28,7 +28,7 @@ class PersonaDistiller:
         corpora = {item.account.url: item.corpus for item in normalized}
         person = PersonRecord(
             person_id=self._make_person_id(accounts),
-            canonical_name=self._canonical_name(accounts),
+            persona_name=self._canonical_name(accounts),
             accounts=accounts,
         )
         self._refresh_person(person, corpora)
@@ -84,8 +84,12 @@ class PersonaDistiller:
 
         person = PersonRecord(
             person_id=stored.person.person_id,
-            canonical_name=stored.person.canonical_name,
+            persona_name=stored.person.persona_name,
             accounts=accounts,
+            schema_version=stored.person.schema_version,
+            canonical_name=stored.person.canonical_name,
+            primary_account_url=stored.person.primary_account_url,
+            aliases=list(stored.person.aliases),
             identity_resolution=dict(stored.person.identity_resolution),
             evidence=evidence,
             history=history,
@@ -112,13 +116,16 @@ class PersonaDistiller:
         corpora: dict[str, list[CorpusRecord]],
     ) -> str:
         lines = [
-            f"# {person.canonical_name}",
+            f"# {person.persona_name}",
             "",
             "## Attached Accounts",
         ]
 
         for account in person.accounts:
-            lines.append(f"- {account.platform.value}: {account.url}")
+            display_name = account.display_name or "(no display name)"
+            lines.append(
+                f"- {account.platform.value}: {display_name} | {account.profile_id} | {account.url}"
+            )
 
         lines.extend(
             [
@@ -166,7 +173,11 @@ class PersonaDistiller:
         corpora: dict[str, list[CorpusRecord]],
     ) -> None:
         self._apply_corpus_to_accounts(person.accounts, corpora)
-        person.canonical_name = self._canonical_name(person.accounts)
+        resolved_name = person.persona_name.strip() or self._canonical_name(person.accounts)
+        person.persona_name = resolved_name
+        person.canonical_name = resolved_name
+        if not person.primary_account_url:
+            person.primary_account_url = person.accounts[0].url if person.accounts else ""
         person.identity_resolution = {
             "strategy": "explicit-persona-attach",
             "canonical_platform": None,

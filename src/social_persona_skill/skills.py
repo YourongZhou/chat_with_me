@@ -274,7 +274,7 @@ class PersonaSkillBuilder:
             if owner in {None, person_id}:
                 return existing_slug
 
-        base_slug = self._slugify(stored.person.canonical_name) or self._slugify(person_id) or f"persona-{person_id}"
+        base_slug = self._slugify(stored.person.persona_name) or self._slugify(person_id) or f"persona-{person_id}"
         owner = self._slug_owner(base_slug)
         if owner in {None, person_id}:
             return base_slug
@@ -311,7 +311,7 @@ class PersonaSkillBuilder:
             if existing_agent_slug and owner in {None, person_id}:
                 return existing_agent_slug
 
-        base_input = requested_slug or stored.person.canonical_name or resolved_slug or person_id
+        base_input = requested_slug or stored.person.persona_name or resolved_slug or person_id
         base_slug = self._slugify_agent(base_input)
         if not base_slug:
             base_slug = f"person-{person_id[:12]}"

@@ -78,6 +78,33 @@ class PersonaWorkflow:
             install_roots=install_roots,
         )
 
+    def migrate_personas(self) -> list[dict[str, object]]:
+        return self.storage.migrate_all()
+
+    def update_persona_metadata(
+        self,
+        person_id: str,
+        *,
+        persona_name: str | None = None,
+        primary_account_url: str | None = None,
+    ):
+        stored = self.storage.load_persona(person_id)
+        if persona_name is not None:
+            stored.person.persona_name = persona_name.strip() or stored.person.persona_name
+        if primary_account_url is not None:
+            stored.person.primary_account_url = primary_account_url.strip()
+        stored.person.canonical_name = stored.person.persona_name
+        markdown = self.distiller.render_markdown(stored.person, stored.corpora)
+        result = OperationResult(
+            person=stored.person,
+            markdown=markdown,
+            created=False,
+            sources=stored.sources,
+            corpora=stored.corpora,
+        )
+        self.storage.save_result(result)
+        return self.storage.load_persona(person_id)
+
     def _backend(self, platform: Platform) -> Backend:
         try:
             return self.registry[platform]

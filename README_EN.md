@@ -8,6 +8,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
 [![X](https://img.shields.io/badge/Platform-X%20%2F%20Twitter-black)](https://x.com)
 [![Xiaohongshu](https://img.shields.io/badge/Platform-%E5%B0%8F%E7%BA%A2%E4%B9%A6-red)](https://www.xiaohongshu.com)
+[![Zhihu](https://img.shields.io/badge/Platform-Zhihu-0084FF)](https://www.zhihu.com)
 
 <br>
 
@@ -67,14 +68,14 @@ The current version focuses on text only. Later iterations may handle:
 
 ## Supported Platforms
 
-> Currently supported backends: Twitter, GitHub, and Xiaohongshu.
+> Currently implemented backends: Twitter, GitHub, Xiaohongshu, and Zhihu.
 
 | Platform | Backend | Status | Collected Content | Login Mode |
 |------|------|----------|----------|----------|
 | X / Twitter | `Scweet` | ✅ Implemented | bio, timeline posts | `auth_token` |
 | Xiaohongshu | `MediaCrawler` | ✅ Implemented | profile bio, note text | QR-code login cache |
-| Instagram | `Instaloader` | 📝 Planned | profile bio, post text | TBD |
-| Zhihu | `MediaCrawler` | 📝 Planned | profile bio, answers, articles | TBD |
+| Instagram | `Instaloader` | ✅ Implemented | profile bio, post text | session-file cache |
+| Zhihu | `MediaCrawler` | ✅ Implemented | profile bio, answers, articles | browser login cache |
 | GitHub | `GitHub API` | ✅ Implemented | profile, README, public issues / PR / commit text | optional token; public API by default |
 | Bubble | `TBD` | 📝 Target | platform message text, profile/feed content | TBD |
 
@@ -239,6 +240,20 @@ Xiaohongshu login:
 - Stores browser state in `.runtime/state/xiaohongshu/browser_state/`
 - Reuses the cached login state for later collection
 
+### Zhihu Backend
+
+```bash
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend bootstrap zhihu
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend login zhihu
+```
+
+Zhihu login:
+
+- Requires a desktop session
+- Launches a browser to complete login
+- Stores browser state in `.runtime/state/zhihu/browser_state/`
+- Reuses the cached login state for later collection
+
 ---
 
 ## Usage
@@ -316,6 +331,45 @@ conda run -n chat python -m social_persona_skill.cli \
   --host opencode
 ```
 
+### 4. Migrate Legacy Persona Data
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  persona migrate
+```
+
+This upgrades legacy `person.json` / `sources.json` files to the latest schema and writes `.bak` backups next to the originals.
+
+### 5. Launch the Local Browser Workbench
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  web serve --host 127.0.0.1 --port 8765
+```
+
+Default entry points:
+
+- Home: `http://127.0.0.1:8765/`
+- Persona detail: `/personas/<person_id>`
+- Job detail: `/jobs/<job_id>`
+
+The workbench explicitly separates these layers:
+
+- `persona_name`: editable human-facing persona name
+- `person_id`: stable storage identifier
+- `display_name`: platform display name
+- `profile_id`: platform account identifier
+
+First-pass UI actions:
+
+- backend `bootstrap / login`
+- persona `create / attach / migrate`
+- edit `persona_name`
+- change `primary_account_url`
+- `skill build`
+
 Install to all three hosts at once:
 
 ```bash
@@ -385,8 +439,13 @@ Backend dependencies and login state are isolated under `.runtime/`:
     xiaohongshu/
       repo/
       venv/
+    zhihu/
+      repo/
+      venv/
   state/
     xiaohongshu/
+      browser_state/
+    zhihu/
       browser_state/
 ```
 
@@ -396,6 +455,9 @@ Notes:
 - The `MediaCrawler` repo is cloned to `.runtime/backends/xiaohongshu/repo/`
 - The `MediaCrawler` Python environment lives at `.runtime/backends/xiaohongshu/venv/`
 - Xiaohongshu browser state is stored at `.runtime/state/xiaohongshu/browser_state/`
+- The Zhihu `MediaCrawler` repo is cloned to `.runtime/backends/zhihu/repo/`
+- The Zhihu Python environment lives at `.runtime/backends/zhihu/venv/`
+- Zhihu browser state is stored at `.runtime/state/zhihu/browser_state/`
 
 ---
 

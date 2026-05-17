@@ -16,6 +16,8 @@ from .models import (
     StoredPersona,
 )
 
+CURRENT_PERSONA_SCHEMA_VERSION = 2
+
 
 class PersonaStorage:
     def __init__(self, base_dir: str | Path = "personas") -> None:
@@ -29,9 +31,25 @@ class PersonaStorage:
             return []
         return sorted(path for path in self.base_dir.iterdir() if path.is_dir())
 
+    def needs_migration(self) -> bool:
+        return any(self.person_needs_migration(path.name) for path in self.existing_person_dirs())
+
+    def person_needs_migration(self, person_id: str) -> bool:
+        person_path = self.person_dir(person_id) / "person.json"
+        if not person_path.exists():
+            return False
+        payload = json.loads(person_path.read_text(encoding="utf-8"))
+        return (
+            int(payload.get("schema_version", 1)) < CURRENT_PERSONA_SCHEMA_VERSION
+            or "persona_name" not in payload
+            or "primary_account_url" not in payload
+            or "aliases" not in payload
+        )
+
     def save_result(self, result: OperationResult) -> Path:
         person_dir = self.person_dir(result.person.person_id)
         person_dir.mkdir(parents=True, exist_ok=True)
+        self._normalize_person_record(result.person)
 
         (person_dir / "person.json").write_text(
             json.dumps(asdict(result.person), indent=2, ensure_ascii=False) + "\n",
@@ -60,6 +78,85 @@ class PersonaStorage:
             sources=sources,
             corpora=corpora,
         )
+
+    def migrate_all(self) -> list[dict[str, object]]:
+        results: list[dict[str, object]] = []
+        for person_dir in self.existing_person_dirs():
+            results.append(self.migrate_persona(person_dir.name))
+        return results
+
+    def migrate_persona(self, person_id: str) -> dict[str, object]:
+        person_dir = self.person_dir(person_id)
+        person_path = person_dir / "person.json"
+        sources_path = person_dir / "sources.json"
+        if not person_path.exists():
+            raise FileNotFoundError(f"Missing person.json for persona {person_id}.")
+        if not sources_path.exists():
+            raise FileNotFoundError(f"Missing sources.json for persona {person_id}.")
+
+        person_payload = json.loads(person_path.read_text(encoding="utf-8"))
+        sources_payload = json.loads(sources_path.read_text(encoding="utf-8"))
+        changed = False
+
+        if int(person_payload.get("schema_version", 1)) < CURRENT_PERSONA_SCHEMA_VERSION:
+            changed = True
+        if "persona_name" not in person_payload:
+            changed = True
+        if "primary_account_url" not in person_payload:
+            changed = True
+        if "aliases" not in person_payload:
+            changed = True
+
+        if not changed:
+            return {
+                "person_id": person_id,
+                "changed": False,
+                "schema_version": int(person_payload.get("schema_version", CURRENT_PERSONA_SCHEMA_VERSION)),
+            }
+
+        self._backup_file(person_path)
+        self._backup_file(sources_path)
+
+        migrated_person = self._migrate_person_payload(person_payload)
+        migrated_sources = self._migrate_sources_payload(sources_payload)
+
+        person_path.write_text(
+            json.dumps(migrated_person, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        sources_path.write_text(
+            json.dumps(migrated_sources, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "person_id": person_id,
+            "changed": True,
+            "schema_version": CURRENT_PERSONA_SCHEMA_VERSION,
+        }
+
+    def update_persona_metadata(
+        self,
+        person_id: str,
+        *,
+        persona_name: str | None = None,
+        primary_account_url: str | None = None,
+    ) -> StoredPersona:
+        stored = self.load_persona(person_id)
+        if persona_name is not None:
+            stored.person.persona_name = persona_name.strip() or stored.person.persona_name
+        if primary_account_url is not None:
+            stored.person.primary_account_url = primary_account_url.strip()
+        stored.person.canonical_name = stored.person.persona_name
+        self._normalize_person_record(stored.person)
+        result = OperationResult(
+            person=stored.person,
+            markdown=stored.markdown,
+            created=False,
+            sources=stored.sources,
+            corpora=stored.corpora,
+        )
+        self.save_result(result)
+        return self.load_persona(person_id)
 
     def _write_corpora(
         self,
@@ -204,10 +301,14 @@ class PersonaStorage:
             )
             for item in payload.get("history", [])
         ]
-        return PersonRecord(
+        person = PersonRecord(
             person_id=payload["person_id"],
-            canonical_name=payload["canonical_name"],
+            persona_name=str(payload.get("persona_name") or payload.get("canonical_name") or payload["person_id"]),
             accounts=accounts,
+            schema_version=int(payload.get("schema_version", 1)),
+            canonical_name=payload.get("canonical_name", payload.get("persona_name", "")),
+            primary_account_url=payload.get("primary_account_url", ""),
+            aliases=list(payload.get("aliases", [])),
             identity_resolution=dict(payload.get("identity_resolution", {})),
             background_summary=payload.get("background_summary", ""),
             talking_style_summary=payload.get("talking_style_summary", ""),
@@ -216,3 +317,62 @@ class PersonaStorage:
             history=history,
             uncertainties=list(payload.get("uncertainties", [])),
         )
+        self._normalize_person_record(person)
+        return person
+
+    def _backup_file(self, path: Path) -> None:
+        backup_path = path.with_name(f"{path.name}.bak")
+        backup_path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def _migrate_person_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        accounts = payload.get("accounts", [])
+        primary_account_url = ""
+        if isinstance(accounts, list):
+            for account in accounts:
+                if isinstance(account, dict):
+                    primary_account_url = str(account.get("url") or "").strip()
+                    if primary_account_url:
+                        break
+
+        persona_name = str(payload.get("persona_name") or payload.get("canonical_name") or payload.get("person_id") or "unknown-person").strip()
+        migrated = dict(payload)
+        migrated["schema_version"] = CURRENT_PERSONA_SCHEMA_VERSION
+        migrated["persona_name"] = persona_name
+        migrated["canonical_name"] = str(payload.get("canonical_name") or persona_name)
+        migrated["primary_account_url"] = str(payload.get("primary_account_url") or primary_account_url)
+        aliases = payload.get("aliases", [])
+        migrated["aliases"] = list(aliases) if isinstance(aliases, list) else []
+        return migrated
+
+    def _migrate_sources_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        accounts = payload.get("accounts", [])
+        normalized_accounts: list[dict[str, object]] = []
+        if isinstance(accounts, list):
+            for item in accounts:
+                if not isinstance(item, dict):
+                    continue
+                normalized_accounts.append(
+                    {
+                        "platform": item["platform"],
+                        "url": item["url"],
+                        "profile_id": item["profile_id"],
+                        "backend": item["backend"],
+                        "collector": item["collector"],
+                        "corpus_path": item["corpus_path"],
+                        "item_count": item["item_count"],
+                        "last_collected_at": item.get("last_collected_at", ""),
+                        "auth_mode": item.get("auth_mode", "none"),
+                        "fetch_status": item.get("fetch_status", "unknown"),
+                        "accessible": item.get("accessible", False),
+                        "display_name": item.get("display_name", ""),
+                        "profile_summary": item.get("profile_summary", ""),
+                    }
+                )
+        return {"accounts": normalized_accounts}
+
+    def _normalize_person_record(self, person: PersonRecord) -> None:
+        person.schema_version = CURRENT_PERSONA_SCHEMA_VERSION
+        person.persona_name = person.persona_name.strip() or person.canonical_name.strip() or person.person_id
+        person.canonical_name = person.persona_name
+        if not person.primary_account_url:
+            person.primary_account_url = person.accounts[0].url if person.accounts else ""
