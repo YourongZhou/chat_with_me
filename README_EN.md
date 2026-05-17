@@ -74,7 +74,7 @@ The current version focuses on text only. Later iterations may handle:
 |------|------|----------|----------|----------|
 | X / Twitter | `Scweet` | ✅ Implemented | bio, timeline posts | `auth_token` |
 | Xiaohongshu | `MediaCrawler` | ✅ Implemented | profile bio, note text | QR-code login cache |
-| Instagram | `Instaloader` | 📝 Planned | profile bio, post text | TBD |
+| Instagram | `Instaloader` | ✅ Implemented | profile bio, post text | session-file cache |
 | Zhihu | `MediaCrawler` | ✅ Implemented | profile bio, answers, articles | browser login cache |
 | GitHub | `GitHub API` | ✅ Implemented | profile, README, public issues / PR / commit text | optional token; public API by default |
 | Bubble | `TBD` | 📝 Target | platform message text, profile/feed content | TBD |
@@ -330,6 +330,45 @@ conda run -n chat python -m social_persona_skill.cli \
   --person-id <id> \
   --host opencode
 ```
+
+### 4. Migrate Legacy Persona Data
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  persona migrate
+```
+
+This upgrades legacy `person.json` / `sources.json` files to the latest schema and writes `.bak` backups next to the originals.
+
+### 5. Launch the Local Browser Workbench
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  web serve --host 127.0.0.1 --port 8765
+```
+
+Default entry points:
+
+- Home: `http://127.0.0.1:8765/`
+- Persona detail: `/personas/<person_id>`
+- Job detail: `/jobs/<job_id>`
+
+The workbench explicitly separates these layers:
+
+- `persona_name`: editable human-facing persona name
+- `person_id`: stable storage identifier
+- `display_name`: platform display name
+- `profile_id`: platform account identifier
+
+First-pass UI actions:
+
+- backend `bootstrap / login`
+- persona `create / attach / migrate`
+- edit `persona_name`
+- change `primary_account_url`
+- `skill build`
 
 Install to all three hosts at once:
 

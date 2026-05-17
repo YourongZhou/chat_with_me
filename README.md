@@ -75,7 +75,7 @@
 |------|------|----------|----------|----------|
 | X / Twitter | `Scweet` | ✅ 已实现 | bio、用户正文 timeline | `auth_token` |
 | 小红书 / Xiaohongshu | `MediaCrawler` | ✅ 已实现 | 主页简介、笔记正文 | 扫码登录缓存 |
-| Instagram | `Instaloader` | 📝 预留 | 个人简介、帖子正文 | 待定 |
+| Instagram | `Instaloader` | ✅ 已实现 | 个人简介、帖子正文 | session 文件缓存 |
 | 知乎 / Zhihu | `MediaCrawler` | ✅ 已实现 | 个人简介、回答、文章 | 浏览器登录缓存 |
 | GitHub | `GitHub API` | ✅ 已实现 | profile、README、公开 issues / PR / commit 文本 | 可选 token；默认公共 API |
 | 泡泡 / Bubble | `TBD` | 📝 目标支持 | 平台消息文本、主页动态 | 待定 |
@@ -298,6 +298,45 @@ conda run -n chat python -m social_persona_skill.cli \
   skill build \
   --person-id <id>
 ```
+
+### 4. 迁移旧 Persona 数据
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  persona migrate
+```
+
+这会把旧版 `person.json` / `sources.json` 升级到新 schema，并在原目录生成 `.bak` 备份。
+
+### 5. 启动本地浏览器工作台
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  web serve --host 127.0.0.1 --port 8765
+```
+
+默认入口：
+
+- 首页：`http://127.0.0.1:8765/`
+- Persona 详情：`/personas/<person_id>`
+- 任务页：`/jobs/<job_id>`
+
+工作台里会把下面几层概念明确分开：
+
+- `persona_name`：可编辑的人类主名
+- `person_id`：稳定存储 ID
+- `display_name`：平台展示名
+- `profile_id`：平台账号 ID
+
+前端支持的第一批动作：
+
+- backend `bootstrap / login`
+- persona `create / attach / migrate`
+- 编辑 `persona_name`
+- 切换 `primary_account_url`
+- `skill build`
 
 如果你要显式指定 slug：
 

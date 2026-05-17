@@ -89,8 +89,12 @@ class HistoryRecord:
 @dataclass(slots=True)
 class PersonRecord:
     person_id: str
-    canonical_name: str
+    persona_name: str
     accounts: list[AccountRecord] = field(default_factory=list)
+    schema_version: int = 2
+    canonical_name: str = ""
+    primary_account_url: str = ""
+    aliases: list[str] = field(default_factory=list)
     identity_resolution: dict[str, object] = field(default_factory=dict)
     background_summary: str = ""
     talking_style_summary: str = ""
