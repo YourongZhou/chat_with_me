@@ -29,9 +29,9 @@ Use it to discuss events in that style, or chat in that voice.<br>
 
 
 Current version:
-**Collect text -> organize corpus -> distill persona -> compile Claude Skill**
+**Collect text -> organize corpus -> distill persona -> compile Claude / Codex / OpenCode Skill**
 
- · [Supported Platforms](#supported-platforms) · [Installation](#installation) · [Usage](#usage) · [How To Chat In Claude](#how-to-chat-in-claude) · [Runtime Layout](#runtime-layout) · [Tests](#tests) · [Credits And Third-Party Projects](#credits-and-third-party-projects) · [Project Structure](#project-structure)
+ · [Supported Platforms](#supported-platforms) · [Installation](#installation) · [Usage](#usage) · [How To Use The Skill Across Hosts](#how-to-use-the-skill-across-hosts) · [Runtime Layout](#runtime-layout) · [Tests](#tests) · [Credits And Third-Party Projects](#credits-and-third-party-projects) · [Project Structure](#project-structure)
 
 </div>
 
@@ -50,7 +50,7 @@ What it does is fairly specific:
   - `profile.md`
   - `sources.json`
   - `corpora/*.jsonl`
-- Compile the result into a Claude Code loadable skill
+- Compile the result into a Claude Code, Codex, or OpenCode loadable skill
 
 The current version focuses on text only. Later iterations may handle:
 - Images
@@ -58,11 +58,16 @@ The current version focuses on text only. Later iterations may handle:
 - Comments
 - Social graph relationships
 
+## TODO
+
+- Support a Bubble ingestion and persona-build path
+- Add platform-specific chat frontends later so the conversation experience can mirror each target platform
+
 ---
 
 ## Supported Platforms
 
-> Currently supported backends: Twitter and Xiaohongshu.
+> Currently supported backends: Twitter, GitHub, and Xiaohongshu.
 
 | Platform | Backend | Status | Collected Content | Login Mode |
 |------|------|----------|----------|----------|
@@ -70,12 +75,13 @@ The current version focuses on text only. Later iterations may handle:
 | Xiaohongshu | `MediaCrawler` | ✅ Implemented | profile bio, note text | QR-code login cache |
 | Instagram | `Instaloader` | 📝 Planned | profile bio, post text | TBD |
 | Zhihu | `MediaCrawler` | 📝 Planned | profile bio, answers, articles | TBD |
-| GitHub | `PyGithub` | 📝 Planned | profile, README, issues / PR / commit text | TBD |
+| GitHub | `GitHub API` | ✅ Implemented | profile, README, public issues / PR / commit text | optional token; public API by default |
+| Bubble | `TBD` | 📝 Target | platform message text, profile/feed content | TBD |
 
 Current product assumptions:
 
 - A persona can start from one platform, then attach more accounts over time
-- On the Claude side:
+- On the host side:
   - `one persona = one skill`
   - `three modes = roleplay / ask / rewrite`
 
@@ -111,12 +117,15 @@ personas/<person_id>/
 - Then attach additional platform accounts to an existing persona
 - Existing corpora are not overwritten
 
-### 3. Claude Skill Compilation
+### 3. Multi-Host Skill Compilation
 
 `skill build` produces two layers of artifacts:
 
 - Human-readable source artifacts: `personas/<person_id>/skill/`
-- Claude Code installed skill: `.claude/skills/persona-<slug>/`
+- Host-specific installed skills:
+  - Claude Code: `.claude/skills/persona-<slug>/`
+  - Codex: `.agents/skills/persona-<slug>/`
+  - OpenCode: `.opencode/skills/persona-<slug>/`
 
 ### 4. One Skill, Three Modes
 
@@ -158,6 +167,22 @@ conda create -y -n chat python=3.11
 conda run -n chat python -m pip install -e .[dev]
 ```
 
+### Install the OpenCode Host
+
+This repository only generates skill files. It does not install the OpenCode application itself.
+
+Per the official OpenCode installation docs, common install paths are:
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+or:
+
+```bash
+npm install -g opencode-ai
+```
+
 ### X / Twitter Backend
 
 ```bash
@@ -176,6 +201,28 @@ Expected format:
 ```text
 # X (twitter):
 your_auth_token_here # token
+```
+
+### GitHub Backend
+
+```bash
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend bootstrap github
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend login github
+```
+
+The GitHub backend uses the public API by default and does not require login.
+
+- No token is needed for a public profile
+- A token is recommended if you want higher rate limits
+
+Optional token location:
+- `.runtime/auth_tokens`
+
+Format:
+
+```text
+# GitHub:
+ghp_your_token_here
 ```
 
 ### Xiaohongshu Backend
@@ -226,7 +273,7 @@ conda run -n chat python -m social_persona_skill.cli \
   https://www.xiaohongshu.com/user/profile/xxx
 ```
 
-### 3. Build the Claude Skill
+### 3. Build the Skill
 
 ```bash
 conda run -n chat python -m social_persona_skill.cli \
@@ -247,15 +294,51 @@ conda run -n chat python -m social_persona_skill.cli \
   --slug my-persona
 ```
 
+Build for Codex:
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  --storage-dir personas \
+  skill build \
+  --person-id <id> \
+  --host codex
+```
+
+Build for OpenCode:
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  --storage-dir personas \
+  skill build \
+  --person-id <id> \
+  --host opencode
+```
+
+Install to all three hosts at once:
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  --storage-dir personas \
+  skill build \
+  --person-id <id> \
+  --host all
+```
+
+Notes:
+
+- If you omit `--host`, the default remains Claude-only
+- OpenCode native skill names must be ASCII kebab-case; if the persona name is non-Latin and you want an explicit custom name, pass `--slug my-persona`
+
 ---
 
-## How To Chat In Claude
+## How To Use The Skill Across Hosts
 
-After the build finishes, Claude Code exposes:
+In Claude Code, the build exposes:
 
 - `/persona-<slug>`
-
-Use it like this.
 
 ### Roleplay
 
@@ -276,6 +359,14 @@ ask: What are the most obvious style traits in this person's public writing?
 ```text
 /persona-andrej-karpathy
 rewrite: We should simplify the stack and reduce operational complexity.
+```
+
+In Codex and OpenCode, the skill is installed as a regular host skill. After activation, the runtime contract is the same:
+
+```text
+roleplay: ...
+ask: ...
+rewrite: ...
 ```
 
 ---
@@ -326,7 +417,7 @@ Notes:
 
 - Default tests do not access real sites
 - Live tests access real X and Xiaohongshu pages
-- `.runtime/`, `.claude/`, and `personas/` are local directories and are already ignored by `.gitignore`
+- `.runtime/`, `.claude/`, `.agents/`, `.opencode/`, and `personas/` are local directories and are already ignored by `.gitignore`
 
 ---
 

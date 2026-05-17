@@ -127,6 +127,33 @@ def test_create_persona_persists_person_sources_and_corpora(tmp_path: Path) -> N
     assert all("corpus_path" in item for item in sources["accounts"])
 
 
+def test_create_persona_from_github_profile_url(tmp_path: Path) -> None:
+    github_url = "https://github.com/karpathy"
+    dataset = {
+        github_url: _collection(
+            platform=Platform.GITHUB,
+            url=github_url,
+            profile_id="karpathy",
+            display_name="Andrej Karpathy",
+            profile_summary="Builds neural net tooling in public.",
+            posts=["refactor dataloader for packed sequences", "improve eval logging"],
+        )
+    }
+    registry = {
+        Platform.GITHUB: FakeBackend(Platform.GITHUB, dataset),
+    }
+
+    workflow = PersonaWorkflow(
+        storage_dir=tmp_path / "personas",
+        runtime_root=tmp_path / ".runtime",
+        registry=registry,
+    )
+    result, saved_dir = workflow.create_persona([github_url])
+
+    assert result.person.accounts[0].platform is Platform.GITHUB
+    assert (saved_dir / "corpora" / "github" / "karpathy.jsonl").exists()
+
+
 def test_attach_persona_adds_new_platform_without_losing_existing_corpus(tmp_path: Path) -> None:
     x_url = "https://x.com/karpathy"
     xhs_url = "https://www.xiaohongshu.com/user/profile/59b62f1550c4b47fbfa368d9"

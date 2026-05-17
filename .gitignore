@@ -1,5 +1,7 @@
 .runtime/
 .claude/
+.agents/
+.opencode/
 personas/
 !personas/b64fa6d59026
 .codex

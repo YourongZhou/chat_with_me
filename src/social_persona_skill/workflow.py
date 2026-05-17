@@ -7,7 +7,7 @@ from .backends import Backend, BackendError, build_backend_registry
 from .models import AccountInput, CollectedAccount, OperationResult, Platform, SkillBuildResult, SourceRecord
 from .runtime import RuntimeLayout
 from .service import PersonaDistiller
-from .skills import ClaudeSkillBuilder
+from .skills import PersonaSkillBuilder
 from .storage import PersonaStorage
 
 
@@ -22,7 +22,7 @@ class PersonaWorkflow:
         self.layout = RuntimeLayout(Path(runtime_root))
         self.storage = PersonaStorage(storage_dir)
         self.distiller = PersonaDistiller()
-        self.skill_builder = ClaudeSkillBuilder(self.storage)
+        self.skill_builder = PersonaSkillBuilder(self.storage)
         self.registry = registry or build_backend_registry(self.layout)
 
     def bootstrap_backend(self, platform: Platform) -> str:
@@ -66,9 +66,17 @@ class PersonaWorkflow:
         person_id: str,
         *,
         slug: str | None = None,
-        target_root: str | Path = ".claude",
+        target_root: str | Path | None = None,
+        hosts: list[str] | None = None,
+        install_roots: dict[str, str | Path] | None = None,
     ) -> SkillBuildResult:
-        return self.skill_builder.build(person_id=person_id, slug=slug, target_root=target_root)
+        return self.skill_builder.build(
+            person_id=person_id,
+            slug=slug,
+            target_root=target_root,
+            hosts=hosts,
+            install_roots=install_roots,
+        )
 
     def _backend(self, platform: Platform) -> Backend:
         try:
@@ -85,6 +93,8 @@ class PersonaWorkflow:
             return Platform.XIAOHONGSHU
         if "x.com" in lowered or "twitter.com" in lowered:
             return Platform.X
+        if "github.com" in lowered:
+            return Platform.GITHUB
         if "instagram.com" in lowered:
             return Platform.INSTAGRAM
         if "zhihu.com" in lowered:

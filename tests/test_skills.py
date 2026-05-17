@@ -123,6 +123,7 @@ def test_skill_build_creates_prompt_pack_and_claude_artifacts(tmp_path: Path) ->
     built = workflow.build_skill(created.person.person_id, target_root=tmp_path / ".claude")
 
     assert built.slug == "andrej-karpathy"
+    assert built.primary_host == "claude"
     assert (saved_dir / "skill" / "manifest.json").exists()
     assert (saved_dir / "skill" / "persona.md").exists()
     assert (saved_dir / "skill" / "style.md").exists()
@@ -135,10 +136,12 @@ def test_skill_build_creates_prompt_pack_and_claude_artifacts(tmp_path: Path) ->
     assert (installed_skill_dir / "references" / "style.md").exists()
     assert (installed_skill_dir / "references" / "examples.md").exists()
     assert not (tmp_path / ".claude" / "commands").exists()
+    assert [(item.host, item.entry_name) for item in built.installs] == [("claude", "/persona-andrej-karpathy")]
     assert [item.name for item in built.commands] == ["/persona-andrej-karpathy"] * 3
     assert [item.mode for item in built.commands] == ["roleplay", "ask", "rewrite"]
     assert [item.prompt_prefix for item in built.commands] == ["roleplay:", "ask:", "rewrite:"]
 
+    manifest = json.loads((saved_dir / "skill" / "manifest.json").read_text(encoding="utf-8"))
     persona_md = (saved_dir / "skill" / "persona.md").read_text(encoding="utf-8")
     skill_md = (installed_skill_dir / "SKILL.md").read_text(encoding="utf-8")
     examples_md = (saved_dir / "skill" / "examples.md").read_text(encoding="utf-8")
@@ -151,7 +154,9 @@ def test_skill_build_creates_prompt_pack_and_claude_artifacts(tmp_path: Path) ->
     assert "rewrite:" in skill_md
     assert "example-01" in examples_md
     assert "LLM training" in examples_md or "第一篇笔记正文" in examples_md
-    assert commands_payload["skill"] == "/persona-andrej-karpathy"
+    assert manifest["installs"][0]["host"] == "claude"
+    assert commands_payload["claude_skill"] == "/persona-andrej-karpathy"
+    assert commands_payload["agent_skill"] == "persona-andrej-karpathy"
     assert len(commands_payload["modes"]) == 3
 
 
@@ -221,6 +226,7 @@ def test_skill_build_redacts_query_tokens_and_uses_portable_manifest_paths(
     manifest = json.loads((saved_dir / "skill" / "manifest.json").read_text(encoding="utf-8"))
     examples_md = (saved_dir / "skill" / "examples.md").read_text(encoding="utf-8")
 
+    assert manifest["primary_host"] == "claude"
     assert manifest["target_root"] == ".claude"
     assert manifest["installed_skill_dir"] == f".claude/skills/persona-{built.slug}"
     assert "/home/" not in json.dumps(manifest, ensure_ascii=False)
@@ -340,3 +346,81 @@ def test_skill_build_refreshes_after_attach(tmp_path: Path) -> None:
     examples_md = (saved_dir / "skill" / "examples.md").read_text(encoding="utf-8")
     assert xhs_url in persona_md
     assert "第一篇笔记正文" in examples_md
+
+
+def test_skill_build_can_install_codex_and_opencode_targets(tmp_path: Path) -> None:
+    x_url = "https://x.com/karpathy"
+    dataset = {
+        x_url: _collection(
+            platform=Platform.X,
+            url=x_url,
+            profile_id="karpathy",
+            display_name="Andrej Karpathy",
+            profile_summary="Neural nets and LLMs.",
+            posts=["I like to build fast GPT systems."],
+        ),
+    }
+    registry = {Platform.X: FakeBackend(Platform.X, dataset)}
+    workflow = PersonaWorkflow(
+        storage_dir=tmp_path / "personas",
+        runtime_root=tmp_path / ".runtime",
+        registry=registry,
+    )
+    created, saved_dir = workflow.create_persona([x_url])
+
+    built = workflow.build_skill(
+        created.person.person_id,
+        hosts=["claude", "codex", "opencode"],
+        target_root=tmp_path / ".claude",
+        install_roots={
+            "codex": tmp_path / ".agents",
+            "opencode": tmp_path / ".opencode",
+        },
+    )
+
+    manifest = json.loads((saved_dir / "skill" / "manifest.json").read_text(encoding="utf-8"))
+
+    assert [item.host for item in built.installs] == ["claude", "codex", "opencode"]
+    assert manifest["primary_host"] == "claude"
+    assert len(manifest["installs"]) == 3
+    assert (tmp_path / ".claude" / "skills" / "persona-andrej-karpathy" / "SKILL.md").exists()
+    assert (tmp_path / ".agents" / "skills" / "persona-andrej-karpathy" / "SKILL.md").exists()
+    assert (tmp_path / ".opencode" / "skills" / "persona-andrej-karpathy" / "SKILL.md").exists()
+    codex_skill_md = (tmp_path / ".agents" / "skills" / "persona-andrej-karpathy" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Activate `persona-andrej-karpathy` then send `roleplay: ...`" in codex_skill_md
+
+
+def test_skill_build_uses_ascii_agent_slug_for_opencode_when_display_name_is_non_ascii(tmp_path: Path) -> None:
+    xhs_url = "https://www.xiaohongshu.com/user/profile/59b62f1550c4b47fbfa368d9"
+    dataset = {
+        xhs_url: _collection(
+            platform=Platform.XIAOHONGSHU,
+            url=xhs_url,
+            profile_id="59b62f1550c4b47fbfa368d9",
+            display_name="毕导",
+            profile_summary="关注 AI 和编程。",
+            posts=["第一篇笔记正文"],
+        ),
+    }
+    registry = {Platform.XIAOHONGSHU: FakeBackend(Platform.XIAOHONGSHU, dataset)}
+    workflow = PersonaWorkflow(
+        storage_dir=tmp_path / "personas",
+        runtime_root=tmp_path / ".runtime",
+        registry=registry,
+    )
+    created, saved_dir = workflow.create_persona([xhs_url])
+
+    built = workflow.build_skill(
+        created.person.person_id,
+        hosts=["opencode"],
+        install_roots={"opencode": tmp_path / ".opencode"},
+    )
+
+    manifest = json.loads((saved_dir / "skill" / "manifest.json").read_text(encoding="utf-8"))
+
+    assert built.primary_host == "opencode"
+    assert built.installs[0].entry_name.startswith("persona-person-")
+    assert manifest["agent_slug"].startswith("person-")
+    assert Path(built.installed_skill_dir, "SKILL.md").exists()
