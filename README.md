@@ -8,6 +8,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
 [![X](https://img.shields.io/badge/Platform-X%20%2F%20Twitter-black)](https://x.com)
 [![Xiaohongshu](https://img.shields.io/badge/Platform-%E5%B0%8F%E7%BA%A2%E4%B9%A6-red)](https://www.xiaohongshu.com)
+[![Zhihu](https://img.shields.io/badge/Platform-%E7%9F%A5%E4%B9%8E-0084FF)](https://www.zhihu.com)
 
 <br>
 
@@ -68,14 +69,14 @@
 
 ## 支持的平台
 
-> 当前支持三个后端：twitter、GitHub 和小红书。
+> 当前已打通四个后端：twitter、GitHub、小红书、知乎。
 
 | 平台 | 后端 | 当前状态 | 采集内容 | 登录方式 |
 |------|------|----------|----------|----------|
 | X / Twitter | `Scweet` | ✅ 已实现 | bio、用户正文 timeline | `auth_token` |
 | 小红书 / Xiaohongshu | `MediaCrawler` | ✅ 已实现 | 主页简介、笔记正文 | 扫码登录缓存 |
 | Instagram | `Instaloader` | 📝 预留 | 个人简介、帖子正文 | 待定 |
-| 知乎 / Zhihu | `MediaCrawler` | 📝 预留 | 个人简介、回答、文章 | 待定 |
+| 知乎 / Zhihu | `MediaCrawler` | ✅ 已实现 | 个人简介、回答、文章 | 浏览器登录缓存 |
 | GitHub | `GitHub API` | ✅ 已实现 | profile、README、公开 issues / PR / commit 文本 | 可选 token；默认公共 API |
 | 泡泡 / Bubble | `TBD` | 📝 目标支持 | 平台消息文本、主页动态 | 待定 |
 
@@ -240,6 +241,20 @@ conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime bac
 - 登录缓存会写入 `.runtime/state/xiaohongshu/browser_state/`
 - 后续采集直接复用缓存
 
+### 知乎后端
+
+```bash
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend bootstrap zhihu
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend login zhihu
+```
+
+知乎登录：
+
+- 需要桌面会话
+- 会调用浏览器完成登录
+- 登录缓存会写入 `.runtime/state/zhihu/browser_state/`
+- 后续采集会复用这份缓存
+
 ---
 
 ## 使用
@@ -387,8 +402,13 @@ rewrite: ...
     xiaohongshu/
       repo/
       venv/
+    zhihu/
+      repo/
+      venv/
   state/
     xiaohongshu/
+      browser_state/
+    zhihu/
       browser_state/
 ```
 
@@ -398,6 +418,9 @@ rewrite: ...
 - `MediaCrawler` repo 安装在 `.runtime/backends/xiaohongshu/repo/`
 - `MediaCrawler` Python 环境在 `.runtime/backends/xiaohongshu/venv/`
 - 小红书浏览器状态在 `.runtime/state/xiaohongshu/browser_state/`
+- 知乎 `MediaCrawler` repo 安装在 `.runtime/backends/zhihu/repo/`
+- 知乎 Python 环境在 `.runtime/backends/zhihu/venv/`
+- 知乎浏览器状态在 `.runtime/state/zhihu/browser_state/`
 
 ---
 
