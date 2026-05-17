@@ -126,6 +126,14 @@ class SkillCommandRecord:
 
 
 @dataclass(slots=True)
+class SkillInstallRecord:
+    host: str
+    target_root: str
+    installed_skill_dir: str
+    entry_name: str
+
+
+@dataclass(slots=True)
 class SkillBuildResult:
     person_id: str
     slug: str
@@ -133,5 +141,7 @@ class SkillBuildResult:
     installed_skill_dir: str
     manifest_path: str
     target_root: str
+    primary_host: str = "claude"
     limited_evidence: bool = False
     commands: list[SkillCommandRecord] = field(default_factory=list)
+    installs: list[SkillInstallRecord] = field(default_factory=list)

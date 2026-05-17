@@ -11,7 +11,7 @@ import shutil
 import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 
-from .models import CorpusRecord, SkillBuildResult, SkillCommandRecord, StoredPersona
+from .models import CorpusRecord, SkillBuildResult, SkillCommandRecord, SkillInstallRecord, StoredPersona
 from .storage import PersonaStorage
 
 
@@ -89,9 +89,19 @@ _EMOJI_RE = re.compile(
 _HASHTAG_RE = re.compile(r"#([^#\n]{1,40})#?")
 _LATIN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{2,}")
 _CJK_TOKEN_RE = re.compile(r"[\u4e00-\u9fff]{2,8}")
+_HOST_CLAUDE = "claude"
+_HOST_CODEX = "codex"
+_HOST_OPENCODE = "opencode"
+_SUPPORTED_SKILL_HOSTS = (_HOST_CLAUDE, _HOST_CODEX, _HOST_OPENCODE)
+_DEFAULT_TARGET_ROOTS = {
+    _HOST_CLAUDE: ".claude",
+    _HOST_CODEX: ".agents",
+    _HOST_OPENCODE: ".opencode",
+}
+_OPENCODE_SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
-class ClaudeSkillBuilder:
+class PersonaSkillBuilder:
     def __init__(self, storage: PersonaStorage) -> None:
         self.storage = storage
 
@@ -100,33 +110,55 @@ class ClaudeSkillBuilder:
         *,
         person_id: str,
         slug: str | None = None,
-        target_root: str | Path = ".claude",
+        target_root: str | Path | None = None,
+        hosts: list[str] | None = None,
+        install_roots: dict[str, str | Path] | None = None,
     ) -> SkillBuildResult:
         stored = self.storage.load_persona(person_id)
         person_dir = self.storage.person_dir(person_id)
         source_dir = person_dir / "skill"
         manifest_path = source_dir / "manifest.json"
         existing_manifest = self._load_manifest(manifest_path)
-
-        target_root_path = Path(target_root).resolve()
+        resolved_hosts = self._resolve_hosts(hosts)
         resolved_slug = self._resolve_slug(
             stored=stored,
             person_id=person_id,
             requested_slug=slug,
             existing_manifest=existing_manifest,
         )
-        compiled = self._compile(stored, resolved_slug, target_root_path)
+        resolved_agent_slug = self._resolve_agent_slug(
+            stored=stored,
+            person_id=person_id,
+            requested_slug=slug,
+            resolved_slug=resolved_slug,
+            existing_manifest=existing_manifest,
+        )
+        target_roots = self._resolve_target_roots(
+            hosts=resolved_hosts,
+            target_root=target_root,
+            install_roots=install_roots,
+        )
+        install_specs = self._build_install_specs(
+            hosts=resolved_hosts,
+            target_roots=target_roots,
+            slug=resolved_slug,
+            agent_slug=resolved_agent_slug,
+        )
+        compiled = self._compile(stored, resolved_slug, resolved_agent_slug, install_specs)
         self._cleanup_previous_install(existing_manifest, compiled)
         self._write_source_pack(source_dir, compiled)
-        installed_skill_dir = self._install_claude_artifacts(compiled, target_root_path)
+        installs = self._install_artifacts(compiled, install_specs)
+        primary_install = installs[0]
+        primary_modes = self._mode_specs_for_host(primary_install["host"], primary_install["entry_name"])
 
         return SkillBuildResult(
             person_id=person_id,
             slug=resolved_slug,
             skill_source_dir=str(source_dir),
-            installed_skill_dir=str(installed_skill_dir),
+            installed_skill_dir=str(primary_install["installed_skill_dir"]),
             manifest_path=str(manifest_path),
-            target_root=str(target_root_path),
+            target_root=str(primary_install["target_root"]),
+            primary_host=str(primary_install["host"]),
             limited_evidence=compiled["limited_evidence"],
             commands=[
                 SkillCommandRecord(
@@ -135,7 +167,16 @@ class ClaudeSkillBuilder:
                     prompt_prefix=item["prompt_prefix"],
                     usage=item["usage"],
                 )
-                for item in compiled["modes"]
+                for item in primary_modes
+            ],
+            installs=[
+                SkillInstallRecord(
+                    host=str(item["host"]),
+                    target_root=str(item["target_root"]),
+                    installed_skill_dir=str(item["installed_skill_dir"]),
+                    entry_name=str(item["entry_name"]),
+                )
+                for item in installs
             ],
         )
 
@@ -143,7 +184,8 @@ class ClaudeSkillBuilder:
         self,
         stored: StoredPersona,
         slug: str,
-        target_root: Path,
+        agent_slug: str,
+        install_specs: list[dict[str, object]],
     ) -> dict[str, object]:
         rows = [
             row
@@ -157,44 +199,55 @@ class ClaudeSkillBuilder:
         style_profile = self._build_style_profile(stored, rows)
         topic_clusters = self._topic_clusters(rows)
         source_hash = self._source_hash(stored)
-        mode_specs = self._mode_specs(slug)
-        mode_metadata = [
-            {
-                "name": item["name"],
-                "mode": item["mode"],
-                "prompt_prefix": item["prompt_prefix"],
-                "usage": item["usage"],
-                "description": item["description"],
-            }
-            for item in mode_specs
-        ]
+        mode_metadata = self._mode_metadata()
         built_at = self._utc_now()
 
         persona_md = self._render_persona_md(stored, topic_clusters)
         style_md = self._render_style_md(style_profile, limited_evidence)
         examples_md = self._render_examples_md(examples)
-        skill_md = self._render_skill_md(stored, slug, limited_evidence)
-        commands_payload = {"skill": f"/persona-{slug}", "modes": mode_metadata}
+        skill_md_by_host = {
+            _HOST_CLAUDE: self._render_claude_skill_md(stored, slug, limited_evidence),
+            _HOST_CODEX: self._render_agent_skill_md(stored, agent_slug, limited_evidence),
+            _HOST_OPENCODE: self._render_agent_skill_md(stored, agent_slug, limited_evidence),
+        }
+        commands_payload = {
+            "claude_skill": f"/persona-{slug}",
+            "agent_skill": f"persona-{agent_slug}",
+            "modes": mode_metadata,
+        }
+        primary_install = install_specs[0]
         manifest = {
             "person_id": stored.person.person_id,
             "slug": slug,
-            "target_host": "claude-code",
-            "target_root": self._portable_path(target_root),
+            "agent_slug": agent_slug,
+            "primary_host": primary_install["host"],
+            "target_host": self._target_host_label(str(primary_install["host"])),
+            "target_root": self._portable_path(primary_install["target_root"]),
             "built_at": built_at,
             "source_hash": source_hash,
             "limited_evidence": limited_evidence,
-            "installed_skill_dir": self._portable_path(target_root / "skills" / f"persona-{slug}"),
+            "installed_skill_dir": self._portable_path(primary_install["installed_skill_dir"]),
+            "installs": [
+                {
+                    "host": item["host"],
+                    "target_root": self._portable_path(item["target_root"]),
+                    "installed_skill_dir": self._portable_path(item["installed_skill_dir"]),
+                    "skill_name": item["skill_name"],
+                    "entry_name": item["entry_name"],
+                }
+                for item in install_specs
+            ],
             "modes": mode_metadata,
         }
         return {
             "slug": slug,
+            "agent_slug": agent_slug,
             "manifest": manifest,
             "persona_md": persona_md,
             "style_md": style_md,
             "examples_md": examples_md,
-            "skill_md": skill_md,
+            "skill_md_by_host": skill_md_by_host,
             "commands_json": json.dumps(commands_payload, ensure_ascii=False, indent=2) + "\n",
-            "modes": mode_specs,
             "limited_evidence": limited_evidence,
         }
 
@@ -243,6 +296,117 @@ class ClaudeSkillBuilder:
                 return str(manifest.get("person_id") or person_dir.name)
         return None
 
+    def _resolve_agent_slug(
+        self,
+        *,
+        stored: StoredPersona,
+        person_id: str,
+        requested_slug: str | None,
+        resolved_slug: str,
+        existing_manifest: dict[str, object] | None,
+    ) -> str:
+        if existing_manifest and existing_manifest.get("agent_slug"):
+            existing_agent_slug = self._slugify_agent(str(existing_manifest["agent_slug"]))
+            owner = self._agent_slug_owner(existing_agent_slug)
+            if existing_agent_slug and owner in {None, person_id}:
+                return existing_agent_slug
+
+        base_input = requested_slug or stored.person.canonical_name or resolved_slug or person_id
+        base_slug = self._slugify_agent(base_input)
+        if not base_slug:
+            base_slug = f"person-{person_id[:12]}"
+
+        owner = self._agent_slug_owner(base_slug)
+        if owner in {None, person_id}:
+            return base_slug
+
+        fallback = f"{base_slug}-{person_id[:6]}"
+        owner = self._agent_slug_owner(fallback)
+        if owner in {None, person_id}:
+            return fallback
+
+        return f"{base_slug}-{person_id}"
+
+    def _agent_slug_owner(self, slug: str) -> str | None:
+        for person_dir in self.storage.existing_person_dirs():
+            manifest_path = person_dir / "skill" / "manifest.json"
+            manifest = self._load_manifest(manifest_path)
+            if not manifest:
+                continue
+            if manifest.get("agent_slug") == slug:
+                return str(manifest.get("person_id") or person_dir.name)
+        return None
+
+    def _resolve_hosts(self, hosts: list[str] | None) -> list[str]:
+        if not hosts:
+            return [_HOST_CLAUDE]
+
+        resolved: list[str] = []
+        for item in hosts:
+            if item not in _SUPPORTED_SKILL_HOSTS:
+                raise SkillBuildError(f"Unsupported skill host '{item}'.")
+            if item not in resolved:
+                resolved.append(item)
+        return resolved
+
+    def _resolve_target_roots(
+        self,
+        *,
+        hosts: list[str],
+        target_root: str | Path | None,
+        install_roots: dict[str, str | Path] | None,
+    ) -> dict[str, Path]:
+        resolved = {host: Path(_DEFAULT_TARGET_ROOTS[host]).resolve() for host in hosts}
+
+        if target_root is not None:
+            target_root_path = Path(target_root).resolve()
+            if len(hosts) == 1:
+                resolved[hosts[0]] = target_root_path
+            elif _HOST_CLAUDE in hosts:
+                resolved[_HOST_CLAUDE] = target_root_path
+            else:
+                raise SkillBuildError(
+                    "target_root can only be used with a single host or when 'claude' is among the selected hosts."
+                )
+
+        if install_roots:
+            for host, root in install_roots.items():
+                if host not in hosts:
+                    continue
+                resolved[host] = Path(root).resolve()
+
+        return resolved
+
+    def _build_install_specs(
+        self,
+        *,
+        hosts: list[str],
+        target_roots: dict[str, Path],
+        slug: str,
+        agent_slug: str,
+    ) -> list[dict[str, object]]:
+        specs: list[dict[str, object]] = []
+        for host in hosts:
+            skill_slug = slug if host == _HOST_CLAUDE else agent_slug
+            skill_name = f"persona-{skill_slug}"
+            if host == _HOST_OPENCODE and not _OPENCODE_SKILL_NAME_RE.fullmatch(skill_name):
+                raise SkillBuildError(
+                    "OpenCode skill names must be lowercase ASCII kebab-case. "
+                    "Use an ASCII `--slug` if you want a custom OpenCode skill name."
+                )
+            entry_name = f"/{skill_name}" if host == _HOST_CLAUDE else skill_name
+            target_root = target_roots[host]
+            specs.append(
+                {
+                    "host": host,
+                    "target_root": target_root,
+                    "skill_name": skill_name,
+                    "entry_name": entry_name,
+                    "installed_skill_dir": target_root / "skills" / skill_name,
+                }
+            )
+        return specs
+
     def _load_manifest(self, manifest_path: Path) -> dict[str, object] | None:
         if not manifest_path.exists():
             return None
@@ -259,21 +423,29 @@ class ClaudeSkillBuilder:
         (source_dir / "examples.md").write_text(str(compiled["examples_md"]), encoding="utf-8")
         (source_dir / "commands.json").write_text(str(compiled["commands_json"]), encoding="utf-8")
 
-    def _install_claude_artifacts(self, compiled: dict[str, object], target_root: Path) -> Path:
-        skill_dir = target_root / "skills" / f"persona-{compiled['slug']}"
-        references_dir = skill_dir / "references"
-        references_dir.mkdir(parents=True, exist_ok=True)
+    def _install_artifacts(
+        self,
+        compiled: dict[str, object],
+        install_specs: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        installed: list[dict[str, object]] = []
+        for spec in install_specs:
+            skill_dir = spec["installed_skill_dir"]
+            references_dir = skill_dir / "references"
+            references_dir.mkdir(parents=True, exist_ok=True)
 
-        (skill_dir / "SKILL.md").write_text(str(compiled["skill_md"]), encoding="utf-8")
-        (skill_dir / "manifest.json").write_text(
-            json.dumps(compiled["manifest"], ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        (references_dir / "persona.md").write_text(str(compiled["persona_md"]), encoding="utf-8")
-        (references_dir / "style.md").write_text(str(compiled["style_md"]), encoding="utf-8")
-        (references_dir / "examples.md").write_text(str(compiled["examples_md"]), encoding="utf-8")
+            host = str(spec["host"])
+            (skill_dir / "SKILL.md").write_text(str(compiled["skill_md_by_host"][host]), encoding="utf-8")
+            (skill_dir / "manifest.json").write_text(
+                json.dumps(self._installed_manifest(compiled["manifest"], spec), ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (references_dir / "persona.md").write_text(str(compiled["persona_md"]), encoding="utf-8")
+            (references_dir / "style.md").write_text(str(compiled["style_md"]), encoding="utf-8")
+            (references_dir / "examples.md").write_text(str(compiled["examples_md"]), encoding="utf-8")
+            installed.append(spec)
 
-        return skill_dir
+        return installed
 
     def _cleanup_previous_install(
         self,
@@ -283,11 +455,18 @@ class ClaudeSkillBuilder:
         if not existing_manifest:
             return
 
-        previous_skill_dir = existing_manifest.get("installed_skill_dir")
-        if previous_skill_dir and str(previous_skill_dir) != str(compiled["manifest"]["installed_skill_dir"]):
-            skill_dir = self._materialize_manifest_path(str(previous_skill_dir))
-            if skill_dir.exists():
-                shutil.rmtree(skill_dir)
+        previous_installs = self._previous_install_map(existing_manifest)
+        next_installs = {
+            str(item["host"]): str(item["installed_skill_dir"])
+            for item in compiled["manifest"].get("installs", [])
+            if isinstance(item, dict)
+        }
+        for host, previous_skill_dir in previous_installs.items():
+            next_skill_dir = next_installs.get(host)
+            if next_skill_dir and previous_skill_dir != next_skill_dir:
+                skill_dir = self._materialize_manifest_path(previous_skill_dir)
+                if skill_dir.exists():
+                    shutil.rmtree(skill_dir)
 
         for item in existing_manifest.get("commands", []):
             if not isinstance(item, dict):
@@ -298,6 +477,43 @@ class ClaudeSkillBuilder:
             command_path = Path(str(previous_command_path))
             if command_path.suffix == ".md" and command_path.exists():
                 command_path.unlink()
+
+    def _previous_install_map(self, manifest: dict[str, object]) -> dict[str, str]:
+        installs: dict[str, str] = {}
+        for item in manifest.get("installs", []):
+            if not isinstance(item, dict):
+                continue
+            host = item.get("host")
+            installed_skill_dir = item.get("installed_skill_dir")
+            if host and installed_skill_dir:
+                installs[str(host)] = str(installed_skill_dir)
+
+        if installs:
+            return installs
+
+        installed_skill_dir = manifest.get("installed_skill_dir")
+        if installed_skill_dir:
+            installs[self._normalize_manifest_host(manifest.get("target_host"))] = str(installed_skill_dir)
+        return installs
+
+    def _normalize_manifest_host(self, value: object) -> str:
+        if value == "claude-code":
+            return _HOST_CLAUDE
+        return str(value or _HOST_CLAUDE)
+
+    def _target_host_label(self, host: str) -> str:
+        if host == _HOST_CLAUDE:
+            return "claude-code"
+        return host
+
+    def _installed_manifest(self, manifest: dict[str, object], spec: dict[str, object]) -> dict[str, object]:
+        installed = dict(manifest)
+        installed["primary_host"] = spec["host"]
+        installed["target_host"] = self._target_host_label(str(spec["host"]))
+        installed["target_root"] = self._portable_path(spec["target_root"])
+        installed["installed_skill_dir"] = self._portable_path(spec["installed_skill_dir"])
+        installed["entry_name"] = spec["entry_name"]
+        return installed
 
     def _render_persona_md(
         self,
@@ -430,7 +646,7 @@ class ClaudeSkillBuilder:
             )
         return "\n".join(lines)
 
-    def _render_skill_md(
+    def _render_claude_skill_md(
         self,
         stored: StoredPersona,
         slug: str,
@@ -467,30 +683,74 @@ class ClaudeSkillBuilder:
             f"- `/persona-{slug}` then `rewrite: <text>`\n"
         )
 
-    def _mode_specs(self, slug: str) -> list[dict[str, str]]:
-        skill_name = f"/persona-{slug}"
+    def _render_agent_skill_md(
+        self,
+        stored: StoredPersona,
+        agent_slug: str,
+        limited_evidence: bool,
+    ) -> str:
+        skill_name = f"persona-{agent_slug}"
+        evidence_line = (
+            "Public post corpus is limited; keep roleplay and rewrite outputs modest and avoid overfitting tiny samples."
+            if limited_evidence
+            else "Public post corpus is available; prioritize rhythm, vocabulary, and formatting patterns visible in the examples."
+        )
+        return (
+            "---\n"
+            f"name: {skill_name}\n"
+            f"description: Generated persona skill for {stored.person.canonical_name}. Use when asked to roleplay as this person, analyze their public persona, or rewrite text in their public style.\n"
+            "---\n\n"
+            f"# Persona Skill: {stored.person.canonical_name}\n\n"
+            "Read the reference files before producing roleplay, analysis, or rewrite outputs:\n"
+            "- `references/persona.md`\n"
+            "- `references/style.md`\n"
+            "- `references/examples.md`\n\n"
+            "Mode selection:\n"
+            "- `roleplay:` reply in first person and stay in character.\n"
+            "- `ask:` answer in third person and analyze the persona from public evidence.\n"
+            "- `rewrite:` preserve the user's facts and rewrite only the expression style.\n"
+            "- If the user does not provide one of these prefixes, ask which mode they want instead of guessing.\n\n"
+            "Behavior contract:\n"
+            "- Ground all outputs in public text evidence only.\n"
+            "- Never present private facts or certainty about hidden beliefs.\n"
+            "- Prefer short supporting excerpts from the examples when explaining traits.\n"
+            f"- {evidence_line}\n\n"
+            "Examples:\n"
+            f"- Activate `{skill_name}` then send `roleplay: ...`\n"
+            f"- Activate `{skill_name}` then send `ask: What traits stand out?`\n"
+            f"- Activate `{skill_name}` then send `rewrite: <text>`\n"
+        )
+
+    def _mode_metadata(self) -> list[dict[str, str]]:
         return [
             {
-                "name": skill_name,
                 "mode": "roleplay",
                 "prompt_prefix": "roleplay:",
-                "usage": f"{skill_name} then start the prompt with `roleplay:`",
                 "description": "Reply in first person and stay within public-text evidence.",
             },
             {
-                "name": skill_name,
                 "mode": "ask",
                 "prompt_prefix": "ask:",
-                "usage": f"{skill_name} then start the prompt with `ask:`",
                 "description": "Analyze persona traits in third person with evidence snippets.",
             },
             {
-                "name": skill_name,
                 "mode": "rewrite",
                 "prompt_prefix": "rewrite:",
-                "usage": f"{skill_name} then start the prompt with `rewrite:`",
                 "description": "Preserve facts and rewrite expression style only.",
             },
+        ]
+
+    def _mode_specs_for_host(self, host: str, entry_name: str) -> list[dict[str, str]]:
+        prefix = "then start the prompt with" if host == _HOST_CLAUDE else "then send"
+        return [
+            {
+                "name": entry_name,
+                "mode": item["mode"],
+                "prompt_prefix": item["prompt_prefix"],
+                "usage": f"{entry_name} {prefix} `{item['prompt_prefix']}`",
+                "description": item["description"],
+            }
+            for item in self._mode_metadata()
         ]
 
     def _select_examples(self, rows: list[CorpusRecord]) -> list[dict[str, str]]:
@@ -737,6 +997,11 @@ class ClaudeSkillBuilder:
         slug = re.sub(r"-{2,}", "-", "".join(chars)).strip("-._")
         return slug
 
+    def _slugify_agent(self, value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").casefold().strip()
+        slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+        return re.sub(r"-{2,}", "-", slug)
+
     def _trim_text(self, text: str, limit: int) -> str:
         compact = text.strip()
         if len(compact) <= limit:
@@ -763,3 +1028,6 @@ class ClaudeSkillBuilder:
         if path.is_absolute():
             return path
         return (Path.cwd() / path).resolve()
+
+
+ClaudeSkillBuilder = PersonaSkillBuilder

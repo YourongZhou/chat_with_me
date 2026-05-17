@@ -8,6 +8,9 @@ from .models import Platform
 from .workflow import PersonaWorkflow
 
 
+_SKILL_HOST_CHOICES = ["claude", "codex", "opencode", "all"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Collect social text corpora and build personas.")
     parser.add_argument(
@@ -48,17 +51,26 @@ def main() -> None:
     persona_attach.add_argument("--person-id", required=True, help="Existing persona ID.")
     persona_attach.add_argument("urls", nargs="+", help="Profile URLs to attach.")
 
-    skill = subparsers.add_parser("skill", help="Build Claude Code skill artifacts from a persisted persona.")
+    skill = subparsers.add_parser("skill", help="Build persona skill artifacts from a persisted persona.")
     skill_subparsers = skill.add_subparsers(dest="skill_command", required=True)
 
-    skill_build = skill_subparsers.add_parser("build", help="Compile and install the Claude-facing skill pack.")
+    skill_build = skill_subparsers.add_parser("build", help="Compile and install Claude, Codex, or OpenCode skill packs.")
     skill_build.add_argument("--person-id", required=True, help="Existing persona ID.")
     skill_build.add_argument("--slug", help="Optional explicit skill slug.")
     skill_build.add_argument(
-        "--target-root",
-        default=".claude",
-        help="Claude Code project root for installed skills.",
+        "--host",
+        action="append",
+        choices=_SKILL_HOST_CHOICES,
+        dest="skill_hosts",
+        help="Install target host. Repeat for multiple hosts, or use 'all'. Defaults to 'claude'.",
     )
+    skill_build.add_argument(
+        "--target-root",
+        default=None,
+        help="Install root override for the selected host. When multiple hosts are selected, this applies to Claude if included.",
+    )
+    skill_build.add_argument("--codex-root", default=None, help="Codex project root for installed skills.")
+    skill_build.add_argument("--opencode-root", default=None, help="OpenCode project root for installed skills.")
 
     args = parser.parse_args()
     workflow = PersonaWorkflow(storage_dir=args.storage_dir, runtime_root=args.runtime_root)
@@ -84,10 +96,21 @@ def main() -> None:
 
     if args.command == "skill":
         if args.skill_command == "build":
+            hosts = _resolve_skill_hosts(args.skill_hosts)
+            install_roots = {
+                host: root
+                for host, root in {
+                    "codex": args.codex_root,
+                    "opencode": args.opencode_root,
+                }.items()
+                if root
+            }
             result = workflow.build_skill(
                 args.person_id,
                 slug=args.slug,
                 target_root=args.target_root,
+                hosts=hosts,
+                install_roots=install_roots or None,
             )
             _print_skill_result(result, args.as_json)
             return
@@ -96,7 +119,20 @@ def main() -> None:
 
 
 def _supported_backend_platforms() -> list[Platform]:
-    return [Platform.X, Platform.XIAOHONGSHU, Platform.INSTAGRAM, Platform.ZHIHU]
+    return [Platform.X, Platform.GITHUB, Platform.XIAOHONGSHU, Platform.INSTAGRAM, Platform.ZHIHU]
+
+
+def _resolve_skill_hosts(values: list[str] | None) -> list[str] | None:
+    if not values:
+        return None
+    if "all" in values:
+        return ["claude", "codex", "opencode"]
+
+    resolved: list[str] = []
+    for item in values:
+        if item not in resolved:
+            resolved.append(item)
+    return resolved
 
 
 def _print_persona_result(result, saved_dir, as_json: bool) -> None:
@@ -119,10 +155,14 @@ def _print_skill_result(result, as_json: bool) -> None:
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2, default=_json_default))
         return
 
-    print(f"Built Claude skill for persona {result.person_id} with slug '{result.slug}'.")
+    print(f"Built persona skill for persona {result.person_id} with slug '{result.slug}'.")
     print(f"Source pack: {result.skill_source_dir}")
-    print(f"Installed skill: {result.installed_skill_dir}")
-    print(f"Skill entry: /persona-{result.slug}")
+    print("Installs:")
+    for install in result.installs:
+        print(
+            f"- {install.host}: {install.installed_skill_dir} "
+            f"(entry: {install.entry_name})"
+        )
     print("Modes:")
     for item in result.commands:
         print(f"- {item.mode}: {item.usage}")

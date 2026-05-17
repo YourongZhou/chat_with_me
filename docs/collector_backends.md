@@ -1,8 +1,9 @@
 # Collector Backends
 
-The current implementation binds two concrete backends:
+The current implementation binds three concrete backends:
 
 - `X / Twitter` -> `Scweet`
+- `GitHub` -> `GitHub API`
 - `小红书 / Xiaohongshu` -> `MediaCrawler`
 
 Both are managed under `.runtime/`.
@@ -13,6 +14,7 @@ Both are managed under `.runtime/`.
 .runtime/
   auth_tokens
   backends/
+    github/
     x/
       venv/
       scweet_state.db
@@ -53,6 +55,37 @@ The X backend uses:
 
 - `Scweet.get_user_info(...)` for profile metadata when available
 - `Scweet.get_profile_tweets(...)` for the actual post corpus
+
+## GitHub backend
+
+Bootstrap:
+
+```bash
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend bootstrap github
+```
+
+Login check:
+
+```bash
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend login github
+```
+
+The GitHub backend:
+
+- uses the public REST API
+- collects profile bio, repository README text, and recent public activity text
+- does not require login for public profiles
+
+Optional token source:
+
+- `.runtime/auth_tokens`
+
+Expected format:
+
+```text
+# GitHub:
+ghp_your_token_here
+```
 
 ## Xiaohongshu backend
 

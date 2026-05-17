@@ -29,11 +29,11 @@
 
 
 当前版本：
-**采集文字 -> 组织语料 -> 生成个性 -> 编译 Claude Skill**
+**采集文字 -> 组织语料 -> 生成个性 -> 编译 Claude / Codex / OpenCode Skill**
 
 [English README](./README_EN.md)
 
- · [支持的平台](#支持的平台) · [安装](#安装) · [使用](#使用) · [Claude 中怎么聊](#claude-中怎么聊) · [运行时目录](#运行时目录) · [测试](#测试) · [致谢与第三方项目](#致谢与第三方项目) · [项目结构](#项目结构)
+ · [支持的平台](#支持的平台) · [安装](#安装) · [使用](#使用) · [多端中怎么用](#多端中怎么用) · [运行时目录](#运行时目录) · [测试](#测试) · [致谢与第三方项目](#致谢与第三方项目) · [项目结构](#项目结构)
 
 </div>
 
@@ -52,18 +52,23 @@
   - `profile.md`
   - `sources.json`
   - `corpora/*.jsonl`
-- 再编译成 Claude Code 可加载的 skill
+- 再编译成 Claude Code、Codex、OpenCode 可加载的 skill
 
 当前版本只关注文字，后续计划处理：
 - 图片
 - 视频
 - 评论
 - 社交关系图
+
+## TODO
+
+- 支持泡泡 / Bubble 平台的人设采集与构建流程
+- 针对不同平台补一层模拟聊天前端，还原对应平台的对话体验
 ---
 
 ## 支持的平台
 
-> 当前支持两个后端：twitter和小红书。
+> 当前支持三个后端：twitter、GitHub 和小红书。
 
 | 平台 | 后端 | 当前状态 | 采集内容 | 登录方式 |
 |------|------|----------|----------|----------|
@@ -71,12 +76,13 @@
 | 小红书 / Xiaohongshu | `MediaCrawler` | ✅ 已实现 | 主页简介、笔记正文 | 扫码登录缓存 |
 | Instagram | `Instaloader` | 📝 预留 | 个人简介、帖子正文 | 待定 |
 | 知乎 / Zhihu | `MediaCrawler` | 📝 预留 | 个人简介、回答、文章 | 待定 |
-| GitHub | `PyGithub` | 📝 预留 | profile、README、issues / PR / commit 文本 | 待定 |
+| GitHub | `GitHub API` | ✅ 已实现 | profile、README、公开 issues / PR / commit 文本 | 可选 token；默认公共 API |
+| 泡泡 / Bubble | `TBD` | 📝 目标支持 | 平台消息文本、主页动态 | 待定 |
 
 目前的产品假设是：
 
 - persona 可以先单平台创建，再逐步 attach 新账号
-- Claude 侧：
+- host 侧：
   - `一个 persona = 一个 skill`
   - `三种模式 = roleplay / ask / rewrite`
 
@@ -112,12 +118,15 @@ personas/<person_id>/
 - 再给已有 persona attach 新平台账号
 - 旧语料不会被覆盖
 
-### 3. Claude Skill 编译
+### 3. 多目标 Skill 编译
 
 `skill build` 会产出两层文件：
 
 - 人可读、可追踪的源产物：`personas/<person_id>/skill/`
-- Claude Code 实际加载的 skill：`.claude/skills/persona-<slug>/`
+- 安装目标会按 host 落到对应目录：
+  - Claude Code: `.claude/skills/persona-<slug>/`
+  - Codex: `.agents/skills/persona-<slug>/`
+  - OpenCode: `.opencode/skills/persona-<slug>/`
 
 ### 4. 单 Skill 三模式
 
@@ -159,6 +168,22 @@ conda create -y -n chat python=3.11
 conda run -n chat python -m pip install -e .[dev]
 ```
 
+### 安装 OpenCode 宿主
+
+这个仓库只负责生成 skill 文件，不会替你安装 OpenCode 本体。
+
+按 OpenCode 官方文档，常见安装方式是：
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+或：
+
+```bash
+npm install -g opencode-ai
+```
+
 ### X / Twitter 后端
 
 ```bash
@@ -177,6 +202,28 @@ X token 默认从下面这个文件读取：
 ```text
 # X (twitter):
 your_auth_token_here # token
+```
+
+### GitHub 后端
+
+```bash
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend bootstrap github
+conda run -n chat python -m social_persona_skill.cli --runtime-root .runtime backend login github
+```
+
+GitHub 后端默认走公开 API，不强制登录。
+
+- 不配 token 也能抓公开 profile
+- 配 token 可以提高 rate limit，更适合批量试验
+
+可选 token 放在：
+- `.runtime/auth_tokens`
+
+格式是：
+
+```text
+# GitHub:
+ghp_your_token_here
 ```
 
 ### 小红书后端
@@ -227,7 +274,7 @@ conda run -n chat python -m social_persona_skill.cli \
   https://www.xiaohongshu.com/user/profile/xxx
 ```
 
-### 3. 编译 Claude Skill
+### 3. 编译 Skill
 
 ```bash
 conda run -n chat python -m social_persona_skill.cli \
@@ -248,17 +295,52 @@ conda run -n chat python -m social_persona_skill.cli \
   --slug my-persona
 ```
 
+编译到 Codex：
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  --storage-dir personas \
+  skill build \
+  --person-id <id> \
+  --host codex
+```
+
+编译到 OpenCode：
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  --storage-dir personas \
+  skill build \
+  --person-id <id> \
+  --host opencode
+```
+
+一次安装到三个 host：
+
+```bash
+conda run -n chat python -m social_persona_skill.cli \
+  --runtime-root .runtime \
+  --storage-dir personas \
+  skill build \
+  --person-id <id> \
+  --host all
+```
+
+说明：
+
+- 默认不写 `--host` 时，仍然只安装到 Claude
+- OpenCode 的原生 skill 名要求 ASCII kebab-case；如果 persona 名是中文且你想显式指定名字，建议传 `--slug my-persona`
+
 ---
 
-## Claude 中怎么聊
+## 多端中怎么用
 
 
-构建完成后，Claude Code 里暴露的是：
+Claude Code 里暴露的是：
 
 - `/persona-<slug>`
-
-
-正确用法如下。
 
 ### Roleplay
 
@@ -279,6 +361,14 @@ ask: 他公开表达里最明显的风格特征是什么？
 ```text
 /persona-andrej-karpathy
 rewrite: We should simplify the stack and reduce operational complexity.
+```
+
+Codex / OpenCode 侧会安装成同名 skill 目录。激活 skill 之后，用法仍然一样：
+
+```text
+roleplay: ...
+ask: ...
+rewrite: ...
 ```
 
 ---
@@ -329,7 +419,7 @@ SOCIAL_PERSONA_RUN_LIVE=1 conda run -n chat pytest -q tests/live
 
 - 默认测试不会访问真实站点
 - live 测试会访问 X 和小红书真实页面
-- `.runtime/`、`.claude/`、`personas/` 都是本地目录，已在 `.gitignore` 中排除
+- `.runtime/`、`.claude/`、`.agents/`、`.opencode/`、`personas/` 都是本地目录，已在 `.gitignore` 中排除
 
 ---
 
